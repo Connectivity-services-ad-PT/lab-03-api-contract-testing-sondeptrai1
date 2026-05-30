@@ -1,0 +1,58 @@
+name: Newman Contract Tests
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  newman:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Lint OpenAPI contracts
+        run: npm run lint:contracts
+
+      - name: Start IoT mock server
+        run: |
+          nohup npx prism mock contracts/iot-ingestion.openapi.yaml --port 4010 --host 127.0.0.1 > prism-iot.log 2>&1 &
+
+      - name: Start AI Vision mock server
+        run: |
+          nohup npx prism mock contracts/ai-vision.openapi.yaml --port 4011 --host 127.0.0.1 > prism-vision.log 2>&1 &
+
+      - name: Wait for mock servers
+        run: |
+          npx wait-on tcp:127.0.0.1:4010 tcp:127.0.0.1:4011 --timeout 60000
+          curl -i http://127.0.0.1:4010/health
+          curl -i http://127.0.0.1:4011/health
+
+      - name: Run Newman contract tests
+        run: npm run test:mock
+
+      - name: Show Prism logs on failure
+        if: failure()
+        run: |
+          echo "===== IoT Prism Log ====="
+          cat prism-iot.log || true
+          echo "===== AI Vision Prism Log ====="
+          cat prism-vision.log || true
+
+      - name: Upload Newman reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: newman-reports
+          path: reports/
